@@ -1,0 +1,113 @@
+--Making one huge table just to check that I can join the tables in later queries
+SELECT *
+FROM [master].[dbo].[Country Fertility] AS fertility
+INNER JOIN [master].[dbo].[Country Finances] AS finances
+    ON fertility.Country_Name = finances.Country_Name
+    ORDER BY fertility.Time;
+
+
+
+--Creating a query to use as a CTE in the future
+SELECT YEAR(CAST(fertility.Time AS datetime2)) AS Year, fertility.Country_Name,
+    fertility.Fertility_rate_total_births_per_woman AS fertility_rate,
+    fertility.Population_growth_annual AS pop_growth, finances.GDP_dollars AS GDP,
+    finances.Poverty_headcount_ratio_at_2_15dollars_a_day AS poverty_headcount_ratio,
+    finances.Net_official_development_assistance_and_official_aid_received_dollars AS aid_received,
+    finances.Primary_school_completion_rate_percent_of_relevant_group AS primary_school_completion
+FROM [master].[dbo].[Country Fertility] AS fertility
+INNER JOIN [master].[dbo].[Country Finances] AS finances
+    ON fertility.Country_Name = finances.Country_Name;
+
+
+
+--Exploring which countries have highest fertility rate
+
+WITH fertility_finances AS
+(
+    SELECT YEAR(CAST(fertility.Time AS date)) as Year, fertility.Country_Name,
+    fertility.Fertility_rate_total_births_per_woman AS fertility_rate,
+    fertility.Population_growth_annual AS pop_growth, finances.GDP_dollars AS GDP,
+    finances.Poverty_headcount_ratio_at_2_15dollars_a_day AS poverty_headcount_ratio,
+    finances.Net_official_development_assistance_and_official_aid_received_dollars AS aid_received,
+    finances.Primary_school_completion_rate_percent_of_relevant_group AS primary_school_completion
+FROM [master].[dbo].[Country Fertility] AS fertility
+INNER JOIN [master].[dbo].[Country Finances] AS finances
+    ON fertility.Country_Name = finances.Country_Name
+)
+SELECT *
+FROM fertility_finances
+ORDER BY fertility_rate DESC;
+
+--Wait - what countries are even included here?
+
+WITH fertility_finances AS
+(
+    SELECT fertility.time, fertility.Country_Name,
+    fertility.Fertility_rate_total_births_per_woman AS fertility_rate,
+    fertility.Population_growth_annual AS pop_growth, finances.GDP_dollars AS GDP,
+    finances.Poverty_headcount_ratio_at_2_15dollars_a_day AS poverty_headcount_ratio,
+    finances.Net_official_development_assistance_and_official_aid_received_dollars AS aid_received,
+    finances.Primary_school_completion_rate_percent_of_relevant_group AS primary_school_completion
+FROM [master].[dbo].[Country Fertility] AS fertility
+INNER JOIN [master].[dbo].[Country Finances] AS finances
+    ON fertility.Country_Name = finances.Country_Name
+)
+SELECT DISTINCT country_name
+FROM fertility_finances;
+
+--There are only twenty countries in here? Come on. 
+
+--Well, we can still do some manipulation with this data, even though it's not a clear picture of the whole world. 
+--Let's check out if there is correlation between GDP and ratio of primary school completed. 
+--Lacking a CORR() function in this Azure database, ChatGPT helped me out with the formula for Pearson's Correlation Coefficient.
+
+
+
+WITH fertility_finances AS
+(
+    SELECT DISTINCT fertility.Time AS year, fertility.time, fertility.Country_Name,
+    fertility.Fertility_rate_total_births_per_woman AS fertility_rate,
+    fertility.Population_growth_annual AS pop_growth, finances.GDP_dollars AS GDP,
+    finances.Poverty_headcount_ratio_at_2_15dollars_a_day AS poverty_headcount_ratio,
+    finances.Net_official_development_assistance_and_official_aid_received_dollars AS aid_received,
+    finances.Primary_school_completion_rate_percent_of_relevant_group AS primary_school_completion
+FROM [master].[dbo].[Country Fertility] AS fertility
+INNER JOIN [master].[dbo].[Country Finances] AS finances
+    ON fertility.Country_Name = finances.Country_Name
+)
+SELECT year, (SUM(GDP * primary_school_completion) - SUM(GDP) * SUM(primary_school_completion) / COUNT(*)) /
+    (SQRT((SUM(GDP * GDP) - SUM(GDP) * SUM(GDP) / COUNT(*)) * (SUM(primary_school_completion * primary_school_completion) - SUM(primary_school_completion) * SUM(primary_school_completion) / COUNT(*))))
+    AS correlation, Country_Name
+FROM fertility_finances
+GROUP BY country_name, year
+HAVING (
+    SUM(GDP * primary_school_completion) - SUM(GDP) * SUM(primary_school_completion) / COUNT(*)
+) / (
+    SQRT(
+        (SUM(GDP * GDP) - SUM(GDP) * SUM(GDP) / COUNT(*)) *
+        (SUM(primary_school_completion * primary_school_completion) - SUM(primary_school_completion) * SUM(primary_school_completion) / COUNT(*))
+    )
+ ) IS NOT NULL
+ORDER BY correlation DESC;
+
+
+
+--Interesting - only in 6 countries does the coefficient hover around .6, meaning that there is only slight positive correlation. 
+--That's not what I would have thought - but maybe checking higher education would show more of a correlation with higher GDP.
+
+
+--Okay, let's move only to the finances table, and see the difference and rate of change between for hi-tech exports data using a window function.
+
+
+
+SELECT Time AS year, country_name,
+       high_technology_exports_perc_of_manufactured_exports AS hi_tech_exports,
+       high_technology_exports_perc_of_manufactured_exports - LAG(high_technology_exports_perc_of_manufactured_exports, 1) OVER
+                (PARTITION BY Country_Name ORDER BY time) AS difference,
+       (high_technology_exports_perc_of_manufactured_exports - LAG(high_technology_exports_perc_of_manufactured_exports, 1) OVER
+                (PARTITION BY Country_Name ORDER BY time))/(LAG(high_technology_exports_perc_of_manufactured_exports, 1) OVER (PARTITION BY Country_Name ORDER BY time))*100 AS percentage_growth
+FROM [master].[dbo].[Country Finances]
+ORDER BY country_name;
+
+--That's all for now!
+
